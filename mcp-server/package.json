@@ -1,0 +1,26 @@
+{
+  "name": "green-data-mcp",
+  "version": "0.1.0",
+  "description": "MCP-palvelin Vihreiden asiakirjakorpukselle",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-sqlite3": "^12.9.0",
+    "snowball-stemmers": "^0.6.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^20.0.0",
+    "@types/snowball-stemmers": "^0.6.2",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  }
+}

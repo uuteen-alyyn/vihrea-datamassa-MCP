@@ -1,0 +1,20 @@
+# Pipeline output — generated artifact
+data/
+
+# Scraped raw source files (may contain third-party content)
+Raw/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Node.js
+mcp-server/node_modules/
+mcp-server/dist/
+
+# Misc
+.DS_Store
+*.env

@@ -244,6 +244,32 @@ def resolve_meta(
             }
         return None
 
+    elif subdir == "Vaihtoehtobudjetit":
+        VAIHTOEHTOBUDJETTI_META = {
+            "vaihtoehtobudjetti2024": {
+                "source_url": "https://www.vihreat.fi/vaihtoehtobudjetti-2024/",
+                "published_at": "2023-11-01T00:00:00Z",
+            },
+            "vaihtoehtobudjetti2025": {
+                "source_url": "https://www.vihreat.fi/vaihtoehtobudjetti-2025/",
+                "published_at": "2024-11-01T00:00:00Z",
+            },
+            "vaihtoehtobudjetti2026": {
+                "source_url": "https://www.vihreat.fi/vaihtoehtobudjetti-2026/",
+                "published_at": "2025-11-01T00:00:00Z",
+            },
+        }
+        if stem in VAIHTOEHTOBUDJETTI_META:
+            entry = VAIHTOEHTOBUDJETTI_META[stem]
+            return {
+                "source_id": "vaihtoehtobudjetti",
+                "source_url": entry["source_url"],
+                "published_at": entry["published_at"],
+                "valid_from": entry["published_at"],
+                "version_label": "v1",
+            }
+        return None
+
     return None
 
 
@@ -285,6 +311,13 @@ SOURCES_DATA = [
         "name": "Vihreän ehdokkaan aineistopankki (Google Sites)",
         "source_type": "scraped_site",
         "source_url": "https://sites.google.com/vihreat.fi/vihreanehdokkaanaineistopankki/",
+        "language": "fi",
+    },
+    {
+        "source_id": "vaihtoehtobudjetti",
+        "name": "Vihreiden vaihtoehtobudjetit",
+        "source_type": "manual",
+        "source_url": "https://www.vihreat.fi/",
         "language": "fi",
     },
 ]

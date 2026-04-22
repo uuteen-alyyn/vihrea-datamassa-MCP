@@ -31,6 +31,7 @@ Format: group by priority. Add dates when items are created. Remove items only w
   Can be done any time before Phase 5.
   Status: Not started.
 
-- **[2026-04-01] Decide whether to include vaihtoehtobudjetti processed Markdown**
-  The 2024 and 2025 processed files exist. Decide if they should be loaded into the DB once pipeline is stable, without a formal ingestion step.
-  Status: Deferred — revisit after pipeline is working.
+- **[2026-04-22] Vaihtoehtobudjetit — lisää kantaan (Phase 6)**
+  Processed Markdown -tiedostot on lisätty kaikille kolmelle vuodelle (2024, 2025, 2026). Lisää `vaihtoehtobudjetti`-lähde `build_db.py`:hen, lisää `Vaihtoehtobudjetit`-tapaus `resolve_meta()`-funktioon kovakoodatuilla metadatoilla ja aja pipeline uudelleen.
+  Katso suunnitelma: BUILD_PIPELINE_PLAN.md → Phase 6.
+  Status: **Valmis (2026-04-22).** 190 dokumenttia, 3461 chunkkia, 0 ohitettu.

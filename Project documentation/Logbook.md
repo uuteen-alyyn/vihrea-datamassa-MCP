@@ -199,3 +199,24 @@ Terminologiamismatch (Jäämeren rata vs. Lapin käsivarren rautatie) ei ratkea 
 **Reunatapaukset:**
 - `ammattiliittojen-taloudellinen-tuki`: 410 Gone — asiakirja poistettu tai oikeudet muuttuneet
 - `asiointipalvelun-ohje` ja `videoiden-tekstittäminen-someen`: 500 Server Error — väliaikainen Googlen ongelma tai pääsyrajoitus
+
+---
+
+## VAIHTOEHTOBUDJETIT LISÄTTY KANTAAN 2026-04-22
+
+**Mitä tehtiin:**
+- Lisätty `vaihtoehtobudjetti`-lähde `SOURCES_DATA`-listaan `build_db.py`:ssä
+- Lisätty `Vaihtoehtobudjetit`-tapaus `resolve_meta()`-funktioon kovakoodatuilla metadatoilla per tiedosto
+- Ajettu `python -m pipeline.build_db --force` — kanta rakennettu uudelleen
+- Päivitetty `BUILD_PIPELINE_PLAN.md` (Phase 6), `BACKLOG.md` ja `lähteet.txt`
+
+**Päätökset:**
+- `source_url` per dokumentti on kanoninen vihreat.fi-sivu (ei PDF-linkki), koska MCP:n käyttäjät tarvitsevat selailtavan linkin
+- `published_at` on arvioitu PDF-tiedostonimistä (marraskuu ko. vuoden edellisenä vuonna — vihreiden budjettiehdotukset julkaistaan syksyllä)
+- Ei `_meta.json`-tiedostoa — metadata kovakoodattu suoraan `resolve_meta()`-funktioon, koska tiedostoja on vain 3 eikä scraperilla ole roolia
+
+**Tulokset:**
+- Dokumentteja ennen: 187 → jälkeen: 190 (+3)
+- Chunkkeja ennen: 3156 → jälkeen: 3461 (+305)
+- Ohitettu: 0
+- Spot-check-haku "luonnonsuojelu vaihtoehtobudjetti" palautti kaikki kolme budjettia oikeilla URL-osoitteilla

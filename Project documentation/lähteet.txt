@@ -13,7 +13,12 @@ https://sites.google.com/vihreat.fi/vihreayhdistystieto/etusivu
 * Vihreän ehdokkaan aineistopankki:
 https://sites.google.com/vihreat.fi/vihreanehdokkaanaineistopankki/
 
-* Vaihtoehtobudjetit:
+* Vaihtoehtobudjetit (kanoniset sivut — käytetään source_url-kenttänä tietokannassa):
+2024 https://www.vihreat.fi/vaihtoehtobudjetti-2024/
+2025 https://www.vihreat.fi/vaihtoehtobudjetti-2025/
+2026 https://www.vihreat.fi/vaihtoehtobudjetti-2026/
+
+* Vaihtoehtobudjetit (alkuperäiset PDF-lähteet):
 2024 https://www.vihreat.fi/wp-content/uploads/2023/11/vaihtoehtobudjetti2024.pdf
 2025 https://www.vihreat.fi/wp-content/uploads/2024/11/vaihtoehtobudjetti2025_v6.pdf
-2026 https://www.vihreat.fi/wp-content/uploads/2025/11/Vihreat_Vaihtoehtobudjetti_2026_Master_WEBFINAL.pdf 
+2026 https://www.vihreat.fi/wp-content/uploads/2025/11/Vihreat_Vaihtoehtobudjetti_2026_Master_WEBFINAL.pdf

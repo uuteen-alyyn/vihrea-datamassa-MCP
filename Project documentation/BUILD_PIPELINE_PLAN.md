@@ -15,7 +15,7 @@ Status: In progress
 | Ehdokasopas (Google Sites) | ✅ 10 .html files | ❌ Not done |
 | Yhdistysopas (Google Sites) | ✅ 15 .html files | ❌ Not done |
 
-> **Note:** Alternative budget PDFs (vaihtoehtobudjetit) are out of scope. PDF conversion is too unreliable for MVP. The pre-processed Markdown files for 2024 and 2025 exist under `Processed/Vaihtoehtobudjetit/` but will not be ingested until a clean pipeline exists for them.
+> **Note:** Alternative budget PDFs were originally out of scope. Pre-processed Markdown files for 2024, 2025, and 2026 now exist under `Processed/Vaihtoehtobudjetit/` and will be ingested in Phase 6 without a PDF conversion step.
 
 ---
 
@@ -326,6 +326,37 @@ Tasks:
 - [x] Create `aliases.json` with seed entries (15 aliasryhmää, ~60 termiä)
 - [x] Implement alias expansion in `pipeline/search.py` (bidirektionaalinen indeksi)
 - [x] Test alias expansion with 3 queries using colloquial Finnish terms (päivähoito, bussi, vanhukset — kaikki toimivat)
+
+---
+
+## Phase 6 — Vaihtoehtobudjetit
+
+Processed Markdown files exist for all three alternative budgets. There is no scraping step — the files were manually converted from PDF. This phase only adds the necessary metadata and source registration to `build_db.py` so the files are picked up and chunked like any other source.
+
+**Source URLs (canonical vihreat.fi pages, used as `source_url` in the DB):**
+
+| Vuosi | Nimi | URL |
+|---|---|---|
+| 2024 | Reilusti Uudistuva Suomi | https://www.vihreat.fi/vaihtoehtobudjetti-2024/ |
+| 2025 | Toivoa Tulevaan | https://www.vihreat.fi/vaihtoehtobudjetti-2025/ |
+| 2026 | Rohkeutta Valita Toisin | https://www.vihreat.fi/vaihtoehtobudjetti-2026/ |
+
+**Why no `_meta.json`:** Unlike scraped sources, these files were not produced by the pipeline. Metadata (URL, published_at, version_label) is hardcoded per filename stem directly in `resolve_meta()`.
+
+**`published_at` dates** (estimated from context — PDF filenames and budget year):
+
+| Tiedosto | published_at |
+|---|---|
+| vaihtoehtobudjetti2024.md | 2023-11-01 |
+| vaihtoehtobudjetti2025.md | 2024-11-01 |
+| vaihtoehtobudjetti2026.md | 2025-11-01 |
+
+Tasks:
+- [x] Add `vaihtoehtobudjetti` source entry to `SOURCES_DATA` in `build_db.py`
+- [x] Add `Vaihtoehtobudjetit` case to `resolve_meta()` in `build_db.py` with hardcoded metadata per filename stem
+- [x] Run `python -m pipeline.build_db --force` to rebuild the DB
+- [x] Verify all 3 files were loaded (190 docs, 3461 chunks, 0 skipped)
+- [x] Run a spot-check query against the new content (kaikki 3 budjettia palautuivat oikeilla URL-osoitteilla)
 
 ---
 

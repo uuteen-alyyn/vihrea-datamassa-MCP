@@ -195,8 +195,14 @@ def main() -> None:
     print(f"Valmis. Kaapattu: {fetched}, ohitettu: {skipped}, virheitä: {errors}")
     print(f"Metatiedot tallennettu: {WEB_META_FILE}")
 
-    if errors > 0:
-        sys.exit(1)
+    # Per-program 4xx/5xx errors (e.g. dead links on vihreat.fi/ohjelmat
+    # index → 404 on the program URL) are recorded in _meta.json with the
+    # failing URL and HTTP status. They are NOT pipeline-fatal: stale
+    # links on the upstream index page are the steady state, and exiting
+    # non-zero kills the rest of the pipeline (set -e in the entrypoint).
+    # The summary line above + the meta file give the operator everything
+    # they need to investigate. Only the index-page fetch failure earlier
+    # in main() is fatal.
 
 
 if __name__ == "__main__":

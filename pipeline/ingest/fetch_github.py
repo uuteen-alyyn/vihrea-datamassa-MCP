@@ -169,8 +169,12 @@ def main() -> None:
     print(f"Valmis. Ladattu: {fetched}, ohitettu: {skipped}, virheitä: {errors}")
     print(f"Metatiedot tallennettu: {META_FILE}")
 
-    if errors > 0:
-        sys.exit(1)
+    # Per-file errors (transient GitHub 5xx, abuse-rate-limit 403 on a
+    # single file, etc.) are recorded in _meta.json. They are NOT
+    # pipeline-fatal: a partial fetch is better than no run at all, and
+    # the next weekly run picks up whatever was missed. Only the listing
+    # API failure earlier in main() is fatal — that means we can't even
+    # enumerate the corpus.
 
 
 if __name__ == "__main__":

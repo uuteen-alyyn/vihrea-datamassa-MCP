@@ -390,7 +390,12 @@ def main() -> None:
         print(f"\nVAROITUKSIA ({len(total_warnings)}):")
         for w in total_warnings:
             print(f"  ⚠  {w}")
-        sys.exit(1)
+        # Validation warnings (oversized chunk, empty chunk, duplicate
+        # chunk_id) are quality concerns but NOT pipeline-fatal — the
+        # chunks are still valid and downstream FTS5 indexing handles
+        # them fine. Operator sees the warnings in the log; if a
+        # systematic upstream change inflates them, that's a signal to
+        # investigate, not a reason to block the weekly run.
 
 
 if __name__ == "__main__":

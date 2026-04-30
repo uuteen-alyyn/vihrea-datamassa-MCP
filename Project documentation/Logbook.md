@@ -220,3 +220,49 @@ Terminologiamismatch (Jäämeren rata vs. Lapin käsivarren rautatie) ei ratkea 
 - Chunkkeja ennen: 3156 → jälkeen: 3461 (+305)
 - Ohitettu: 0
 - Spot-check-haku "luonnonsuojelu vaihtoehtobudjetti" palautti kaikki kolme budjettia oikeilla URL-osoitteilla
+
+---
+
+## ENTRY PIPELINE FIX — OSITTAISET VIRHEET EIVÄT ENÄÄ TAPA AJOA 2026-04-30 14:30:00
+
+Vihrea-MCP-päätiedostoprojektin Hetzner-deploy paljasti, että pipeline poistuu kesken ajon kun yksittäisiä lähteitä epäonnistuu — vaikka dataa olisi muuten haettu/normalisoitu/chunkkattu onnistuneesti.
+
+**Konkreettinen toistunut tapaus:**
+vihreat.fi/ohjelmat/-indeksisivu listaa kaksi vanhaa ohjelmaa, joiden URLit nykyään 404:
+- `/ohjelmat/kohti-valikoivaa-asevelvollisuutta/`
+- `/ohjelmat/eurooppa-ohjelma/`
+
+`scrape_ohjelmat.py` käsitteli kummankin 404:n virheenä, kasvatti `errors`-laskuria ja kutsui `sys.exit(1)` lopussa. Pipeline-orkestraattorin `set -e` tappoi koko ajon → vaiheet 3–6 (scrape_sites, normalize, chunk, build_db) eivät päässeet käyntiin → `green_data.db` ei rakentunut → MCP:n `corpus_*`-työkalut palauttivat "tietokantavirhe".
+
+**Korjaus — neljä paikkaa, sama kuvio:**
+
+1. `pipeline/ingest/scrape_ohjelmat.py` — poistettu `if errors > 0: sys.exit(1)`. Yksittäiset 404:t kirjautuvat jo `Raw/Ohjelmat/web/_meta.json`:iin URL:n ja HTTP-statuksen kanssa. Indeksisivun kaatuminen earlier in main() on edelleen fatal (sen ilman emme voi enumeroida ollenkaan).
+
+2. `pipeline/ingest/fetch_github.py` — sama kuvio, sama korjaus. GitHub-API:n listauskutsun epäonnistuminen on edelleen fatal; per-tiedosto 5xx tai 403 on warning-tason. Osittainen vaihe parempi kuin ei mitään — seuraava ajo paikkaa.
+
+3. `pipeline/normalize.py` — `any_errors`-muuttuja oli kuollut (alustettu False, ei koskaan asetettu Trueksi koska `run_source` ei propagoi virheitä takaisin). `if any_errors: sys.exit(1)` -lohko ei siis koskaan ampunut; poistettu kommentilla varustettuna selittäväksi miksi.
+
+4. `pipeline/chunk.py` — `if total_warnings: ... sys.exit(1)` muutettu pelkäksi tulostukseksi. Validointi-varoitukset (oversized chunk, empty chunk, duplikaatti chunk_id) ovat laatuasioita, eivät pipeline-fataaleja. Chunkit ovat silti käyttökelpoisia, FTS5-indeksointi käsittelee ne hyvin.
+
+**Periaate:**
+- Lähde-tason kaatuminen ennen kuin mitään dataa on saatu (esim. indeksisivu, listauskutsu): **fatal**, koska emme voi tietää mitä yrittää
+- Per-dokumentti / per-tiedosto -virhe kun valtaosa onnistui: **warning**, kirjataan _meta.json:iin tai stdoutiin, ei taputeta
+- Validointi-varoitukset valmiille chunkille: **info**, eivät edes warning-tasolla väärin
+
+**Vaikutus:**
+- Pipeline kestää vihreat.fi:n vanhentuneet linkit, GitHub:n hetkelliset 5xx:t, yksittäisten dokumenttien parse-virheet
+- Operaattorille näkyvyys säilyy: virhelaskurit lopussa, detaljit `Raw/<lähde>/_meta.json`:issa
+- Ei muutoksia onnistuneen ajon polkuun — vain epäonnistuneet ajot palautuvat siellä missä ne ennen kaatuivat
+
+**Muutetut tiedostot:**
+- `pipeline/ingest/scrape_ohjelmat.py`
+- `pipeline/ingest/fetch_github.py`
+- `pipeline/normalize.py`
+- `pipeline/chunk.py`
+- `Project documentation/Logbook.md` (tämä merkintä)
+
+**Testit:**
+Pipeline-skripteille ei ole yksikkötestejä. Tarkistus tapahtuu live-ajossa Hetzner-laatikolla `Vihreä-MCP`-umbrella-repon submodule-pin-bumpin jälkeen.
+
+**Sivuhuomio Vihreille:**
+vihreat.fi/ohjelmat/-sivulla on kaksi rikkinäistä linkkiä (`kohti-valikoivaa-asevelvollisuutta`, `eurooppa-ohjelma`). Lähetä joku korjaamaan ne sivuston puolella jos sopii.

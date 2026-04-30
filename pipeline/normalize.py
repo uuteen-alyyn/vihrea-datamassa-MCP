@@ -283,15 +283,17 @@ def main() -> None:
     print(f"Normalisoidaan: {', '.join(targets)}")
     print()
 
-    any_errors = False
     for name in targets:
         run_source(name, SOURCES[name], force=args.force)
 
     print()
     print("Valmis.")
 
-    if any_errors:
-        sys.exit(1)
+    # Per-document normalize errors are logged inline by run_source().
+    # They are NOT pipeline-fatal: a single malformed source HTML
+    # shouldn't kill the chunk/build_db steps that follow. (The previous
+    # `if any_errors` gate was always False — `any_errors` was a dead
+    # local variable that run_source never propagated to.)
 
 
 if __name__ == "__main__":

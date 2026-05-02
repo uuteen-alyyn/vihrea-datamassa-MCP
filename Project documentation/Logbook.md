@@ -478,3 +478,109 @@ Bumppaa submodule-pin tähän committiin. Operaattorin retest:
 4. Jos ei → strippaus ei ollut syy. Eskaloi Option 2:lla (multi-block per chunk).
 
 Stripattu vastaus on nyt pienempi kuin alkuperäinen 13.7 KB (URL:t ja korostusmerkit kutistuvat), mikä ei sinänsä haittaa — pienempi payload on aina toivottavampaa.
+
+---
+
+## ENTRY BUG B FIX, ITERATION 2 — MULTI-BLOCK PER CHUNK 2026-05-02 18:55:00
+
+Vihrea-MCP-päätiedoston operaattori vahvisti retest:llä että edellisen kierroksen markdown-strippaus (`60f2972`) EI korjannut Bug B:tä — claude.ai:n käyttöliittymä jämähtää edelleen vaikka chunk-fields ovat puhdistettuja markdownista. Diagnostiikkarivi:
+
+```
+:3d5d434 (pre-strip):  limit=8,  results=8,  13694 bytes (1712 / chunk)
+:b25279a (post-strip): limit=10, results=10, 19723 bytes (1972 / chunk)
+```
+
+Limit erosi (Claude valitsi 10:n eikä 8:n tällä kertaa), joten suora vertailu ei ole täydellinen, mutta per-chunk-tavu lasku ei muuttanut symptomaa. Markdown ei ollut syy — tai ei ainakaan ainoa syy.
+
+Eskalaatio Option 2:lla per dev-team-protokolla: yksittäinen iso JSON-blob → useita pieniä content-blokkeja, yksi per chunk + header.
+
+### Uusi vastauksen muoto
+
+`tools/search_chunks.ts`:n handler ei enää palauta yhtä `{ content: [{ type:"text", text: JSON.stringify(...) }] }`-blokkia. Nyt:
+
+```ts
+return {
+  content: [
+    { type: "text", text: formatHeaderBlock(query, attempt, results.length) },
+    { type: "text", text: formatResultBlock(results[0], 0, total) },
+    { type: "text", text: formatResultBlock(results[1], 1, total) },
+    ...
+  ]
+};
+```
+
+### Per-blokin muoto
+
+Header (yksi):
+```
+Löytyi 8 osumaa haulle "perustulo". Tulokset järjestyksessä parhaasta huonompaan:
+```
+
+(Tai jos 0 tulosta: `Korpuksesta ei löytynyt osumia haulle "X" (yritys N/3).`)
+
+Result (N kpl, yksi per chunk):
+```
+Tulos 1/8 (osuvuus -5.61)
+Otsikko: Vihreä perustulomalli
+Lähde: https://www.vihreat.fi/ohjelmat/perustulomalli2014/
+Polku: Vihreä perustulomalli > Sisällys:
+Chunk ID: 60d9ea0a
+
+Vihreä perustulomalli > Sisällys:
+
+Perustulomalli on aika päivittää.
+...
+```
+
+Plain text. Ei markdownia metadatassa (ei `**bold**`, ei `[link](url)`-syntaksia). Chunk-teksti tulee strippauksen läpi (`60f2972`) joten myös se on plain text. Mikään yksittäinen blokki ei ylitä ~2 KB:tä, kun aikaisemmin koko vastaus oli 13–20 KB yhdessä blobissa.
+
+### Miksi multi-block on robustimpi
+
+1. Sivuuttaa "yksi suuri blob" -renderöintiongelman riippumatta siitä mikä sen tarkalleen aiheutti (koko, sisältö, jokin tietty merkki).
+2. Jokainen blokki on itsenäinen: claude.ai voi näyttää sen yksinään riippumatta muista.
+3. LLM voi siteerata yksittäisen chunkin lähteenä ilman lisäjäsennyspaitsi (otsikko + URL kunkin blokin yläosassa).
+
+### Vastauksen muodon dokumentaatio päivitetty
+
+`DESCRIPTION`-kenttä päivittyi:
+> "Vastaus: ensimmäinen content-blokki on tiivistelmä; sen jälkeen yksi blokki per chunk sisältäen otsikon, lähde-URL:n, otsikkopolun ja chunk-tekstin (Finnish plain text)."
+
+Aiempi versio mainitsi `chunk_id, title, source_url, heading_path, score, text` -kentät — sopii edelleen sisällön kuvaukseen, mutta uusi muoto kertoo myös rakenteen.
+
+### Diagnostiikka päivittyi
+
+Yksirivinen log:
+```
+[corpus_search_chunks] query="perustulo" limit=10 attempt=1 → 10 results, 19723 bytes across 11 content blocks
+```
+
+`CORPUS_DEBUG_DUMP=1` env-gate dumppaa nyt per-blokki-yhteenvedon (`{block, type, bytes, preview}`-array) sen sijaan että tulostaisi yhden ison stringin. Hyödyllisempi multi-block-rakenteelle.
+
+### Mitä säilyy
+
+- `c09415d`:n defensiivinen `parseHeadingPath` — pidetään, suojaa edelleen rikkinäisiltä riveiltä.
+- `60f2972`:n `stripMarkdown` — pidetään. Vaikka se ei korjannut renderöintiongelmaa yksin, se vähentää kohinaa ja on hyvä siivousaskel kaikilla raja-aktiivisilla.
+- `1a6ff99`:n env-gated DEBUG_DUMP — pidetään, formaatti vain päivittyi multi-block-rakenteeseen.
+- `corpus_get_document` — koskemattomana. Sen vastaus oli aina yksi dokumentti (ei N chunkkia yhdessä blobissa), eikä Bug B osunut siihen.
+
+### Tiedostot
+
+- `mcp-server/src/tools/search_chunks.ts` — uusi multi-block vastaus, `formatHeaderBlock`, `formatResultBlock` ekstrahoitu pure-funktioiksi
+- `mcp-server/src/tools/search_chunks.test.ts` (uusi) — 11 unit-testia formatoittajille
+- `Project documentation/Logbook.md` — tämä merkintä
+
+### Build/testit
+
+`npm run build` clean. `npm test`: **27/27 passing** (16 search + 11 uudet search_chunks-formatter).
+
+### Hand-off Vihrea-MCP-päätiedostolle
+
+Bumppaa submodule-pin tähän committiin. Operaattorin retest sama kuin viimeksi:
+
+1. `git pull && docker compose pull && docker compose up -d --force-recreate vihrea-mcp`
+2. Triggeröi `corpus_search_chunks` claude.ai:sta samalla queryllä
+3. Diagnostiikkarivin pitäisi nyt näyttää `... bytes across N content blocks` — tarkista että block count > 1
+
+**Onnistuminen:** claude.ai renderöi tulokset → Bug B suljettu, Phase 3 suljettu.
+
+**Epäonnistuminen:** jos UI vielä jämähtää, tämä menee MCP-protokollan rajan yli. Lähetä diagnostiikkarivi + access-log-rivi (status, ms) takaisin. Seuraava askel olisi katsoa `StreamableHTTPServerTransport`:n käyttäytymistä SDK-tasolla (esim. mikseI-suuri vastaus rikkoo, vaikka muiden työkalujen ~10 KB vastaukset toimivat).

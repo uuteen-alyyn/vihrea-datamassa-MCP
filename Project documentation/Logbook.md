@@ -266,3 +266,69 @@ Pipeline-skripteille ei ole yksikkötestejä. Tarkistus tapahtuu live-ajossa Het
 
 **Sivuhuomio Vihreille:**
 vihreat.fi/ohjelmat/-sivulla on kaksi rikkinäistä linkkiä (`kohti-valikoivaa-asevelvollisuutta`, `eurooppa-ohjelma`). Lähetä joku korjaamaan ne sivuston puolella jos sopii.
+
+---
+
+## ENTRY DELETE-MODE DB + DEFENSIVE SEARCH + DIAGNOSTIC LOGGING 2026-05-02 15:25:00
+
+Vihrea-MCP umbrella's live deploy paljasti kaksi erillistä bugia samalla kertaa:
+
+**Bug A — `corpus_*`-työkalut palauttivat `SQLITE_CANTOPEN`:n.** Pipeline jätti tietokannan WAL-tilaan (`PRAGMA journal_mode=WAL` rivillä 353 ennen rakennusta), eikä koskaan vaihtanut takaisin. WAL-tilainen SQLite-tietokanta tarvitsee `.db-wal`- ja `.db-shm`-sivutiedostot AINA kun sitä avataan — myös readonly-tilassa. Vihrea-MCP:n tuotantokäyttö mounttaa `data/`-hakemiston `:ro` (puolustus syvyydessä, ettei MCP-säiliö vahingossa kirjoittaisi tietokantaan), joka estää SQLite:tä luomasta noita sivutiedostoja → CANTOPEN.
+
+Operaattorin paikallinen kiertotie oli pudottaa `:ro`-lippu, joka toimii mutta hylkää syvyyspuolustuksen. Parempi korjaus: pidä `:ro`, mutta jätä DB DELETE-tilaan. Kokeiltu vaihtoehto `?immutable=1` URI-lipun kautta osoittautui käyttökelvottomaksi — verifioitu lukemalla `node_modules/better-sqlite3/src/objects/database.cpp`:n lähdettä, `sqlite3_open_v2` kutsutaan ilman `SQLITE_OPEN_URI`-lippua, joten URI-syntaksia ei jäsennetä.
+
+**Korjaus:** Lisätty `PRAGMA journal_mode=DELETE` `pipeline/build_db.py`:n loppuun ennen `conn.close()`:ia. Tämä:
+- Checkpointtaa WAL:n päätietokantaan
+- Poistaa `.db-wal`/`.db-shm`-sivutiedostot
+- Päivittää tietokannan otsikon DELETE-tilaan
+- Lopputuloksena tiedosto on täysin self-contained — readonly-avaus ei tarvitse sivutiedostoja
+
+`mcp-server/src/db.ts`:stä poistettu turha `_db.pragma("journal_mode = WAL")` -rivi. SQLite olisi joka tapauksessa hiljaisesti ohittanut sen readonly-yhteydellä, mutta sen läsnäolo peitti pohjamuutoksen kun mountti-bugi osui.
+
+WAL säilyy edelleen rakennusvaiheessa (rivi 353) suorituskyvyn vuoksi — vain valmis tiedosto on DELETE-tilassa.
+
+**Bug B — `corpus_search_chunks` palautti tyhjää sisältöä claude.ai:lle SQL:n menetessä läpi.** Operaattori varmensi: SQL palautti 3 todellista riviä oikein, mutta claude.ai:n käyttöliittymä näytti työkalun "ottaa kauan, ei koskaan valmistu" -tilassa. HTTP-vastaus palasi 200:lla 131 ms:ssä, joten se LÄHETETTIIN — claude.ai:n päässä jokin kuitenkin esti renderöinnin. Bug-ilmoituksen ehdokas #1 oli `JSON.parse(row.heading_path)` joka heittäisi virheen jollain rivillä.
+
+**Defensiivinen korjaus `search.ts`:ssä:** uusi sisäinen `parseHeadingPath(raw, chunkId)` -apufunktio, joka:
+- Palauttaa `[]` jos arvo on `null`/`undefined`/ei-string
+- Yrittää `JSON.parse`:a try/catchissa
+- Jos jäsennys onnistuu mutta tulos ei ole array → `[]`
+- Jos jäsennys epäonnistuu → loggaa varoituksen `chunk_id`:n + 80 ensimmäisen merkin kanssa, palauttaa `[]`
+
+Yksittäinen rikkinäinen `heading_path`-rivi ei enää kaada koko `.map()`-operaatiota. Aiemmin se olisi ohjautunut työkalun yläjuonen `try/catch`:n kautta `"Tietokantavirhe haun aikana. Yritä uudelleen."`-vastaukseksi, joka ei erottuisi todellisesta DB-virheestä.
+
+**Diagnostinen loggaus `search_chunks.ts`:ssä:** yksittäinen rivi per kutsu, joka näyttää `query`, `limit`, `attempt`, tulosrivien määrän ja serialisoidun JSON-vastauksen pituuden tavuissa. Kun operaattori seuraavan kerran kohtaa "ei valmistu" -ilmiön, `docker logs vihrea-mcp` näyttää nyt onko ongelma:
+- 0 tulosta + 100-tavuinen vastaus (tyhjä haku — ei bugi, normaali behaviour)
+- 8 tulosta + 50 KB vastaus (potentiaalisesti claude.ai:n parser-rajoitus)
+- 8 tulosta + iso vastaus jossa erikoismerkkejä (mahdollinen UTF-8-koodausongelma)
+
+Ilman näkyvyyttä siitä mitä lähetettiin, vianmäärityksessä on liikaa olettamia.
+
+### Mitä EI muuttunut
+
+- `search()`:n SQL-kysely ei muutu — operaattori varmensi sen palauttavan oikeita rivejä
+- Tietokantaskeema ei muutu
+- Pipeline:n perusrakenne (steps 1–6) ei muutu
+
+### Tiedostot
+
+- `pipeline/build_db.py` — yksi rivi `PRAGMA journal_mode=DELETE` ennen `conn.close()`
+- `mcp-server/src/db.ts` — poistettu `pragma("journal_mode = WAL")`
+- `mcp-server/src/search.ts` — uusi `parseHeadingPath` apufunktio, `JSON.parse`-kutsu siirretty defensiiviseksi
+- `mcp-server/src/tools/search_chunks.ts` — diagnostinen `console.log` jokaisessa kutsussa
+- `Project documentation/Logbook.md` — tämä merkintä
+
+### Build/testit
+
+`mcp-server`: 6/6 testit menneet (buildFtsQuery — search()-funktiolle ei ole testiä koska se vaatisi rakennetun tietokannan, jota CI:ssä ei ole). Pipeline-skripteille ei testejä.
+
+### Hand-off Vihrea-MCP-päätiedostolle
+
+Bumppaa `submodules/corpus`-pin tähän committiin. Pipeline-image rakentuu ja sisältää DELETE-tilan korjauksen. MCP-image rakentuu ja sisältää defensiivisen parser:in + diagnostisen loggauksen.
+
+Operaattorin pitäisi:
+1. Uudelleenajaa pipeline kerran tällä imagella → tuottaa DELETE-tilaisen `green_data.db`:n
+2. Palauttaa `:ro` mounttiin `docker-compose.yml`:ssä (operaattori oli pudottanut sen paikallisesti kiertotienä)
+3. Käynnistää MCP uudelleen
+4. Yrittää `corpus_search_chunks` claude.ai:sta
+5. Tarkistaa `docker logs vihrea-mcp | grep corpus_search_chunks` — sieltä nyt näkyy yksi rivi per kutsu, jonka avulla Bug B:n syy selviää jos se vielä toistuu

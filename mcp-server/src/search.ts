@@ -109,8 +109,30 @@ export function search(query: string, limit: number = 10): ChunkResult[] {
     document_id: row.document_id,
     title: row.title,
     source_url: row.source_url,
-    heading_path: JSON.parse(row.heading_path) as string[],
+    // Parse defensively. Pipeline always inserts json.dumps([...]) so this
+    // SHOULD always be a valid JSON array of strings — but if any historical
+    // row has a malformed value, a single bad row should not throw and kill
+    // the whole map (which would surface as "Tietokantavirhe" to the user
+    // and was previously indistinguishable from a real DB error).
+    heading_path: parseHeadingPath(row.heading_path, row.chunk_id),
     score: row.score,
     text: row.text,
   }));
+}
+
+function parseHeadingPath(raw: unknown, chunkId: string): string[] {
+  if (raw == null) return [];
+  if (typeof raw !== "string") return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed.filter((s): s is string => typeof s === "string");
+    }
+    return [];
+  } catch {
+    console.warn(
+      `[search] invalid heading_path JSON for chunk ${chunkId}: ${JSON.stringify(raw).slice(0, 80)}`,
+    );
+    return [];
+  }
 }

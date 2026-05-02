@@ -76,11 +76,26 @@ export function registerSearchChunks(server: McpServer): void {
         attempt,
       };
 
+      // Emit a single one-line diagnostic per call. Vihreä-MCP's deploy hit a
+      // case where the HTTP layer returned 200 in 131 ms but claude.ai's UI
+      // displayed "took very long, never finished" — the MCP wire response
+      // was opaque from the access log alone. This log makes result count
+      // and serialised payload size visible so future regressions are
+      // bisectable from `docker logs vihrea-mcp` without standing up a
+      // packet capture.
+      const responseText = JSON.stringify(output, null, 2);
+      console.log(
+        `[corpus_search_chunks] query=${JSON.stringify(query)} ` +
+          `limit=${limit} attempt=${attempt} → ` +
+          `${results.length} result${results.length === 1 ? "" : "s"}, ` +
+          `${responseText.length} bytes`,
+      );
+
       return {
         content: [
           {
             type: "text" as const,
-            text: JSON.stringify(output, null, 2),
+            text: responseText,
           },
         ],
       };

@@ -441,6 +441,17 @@ def build_database(force: bool = False) -> None:
     conn.execute("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')")
     conn.commit()
 
+    # Demote journal mode back to DELETE before close. Reason: the MCP server
+    # mounts the DB read-only (defense-in-depth — see umbrella's
+    # docker-compose.yml). A WAL-mode database requires .db-wal and .db-shm
+    # sidecar files at every open, including readonly ones, and the :ro
+    # bind-mount blocks SQLite from creating them → SQLITE_CANTOPEN.
+    # Switching back to DELETE checkpoints the WAL into the main file,
+    # removes the sidecars, and updates the file header so subsequent
+    # readonly opens are completely self-contained. WAL was used during the
+    # build phase for write performance; the consumer doesn't need it.
+    conn.execute("PRAGMA journal_mode=DELETE")
+
     conn.close()
 
     print()

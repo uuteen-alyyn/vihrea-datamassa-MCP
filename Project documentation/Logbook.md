@@ -398,3 +398,83 @@ Bumppaa submodule-pin tähän committiin. Operaattorille:
 ### Build/testit
 
 `npm run build` clean. `npm test`: 6/6 passing (ei muutoksia testikattavuuteen — env-gate-koodi on triviaali).
+
+---
+
+## ENTRY BUG B ROOT CAUSE — MARKDOWN COLLISION IN JSON-STRINGIFIED RESPONSE BLOB 2026-05-02 18:20:00
+
+Vihrea-MCP-päätiedoston operaattori onnistui kaappaamaan vastauksen payload edellisen kierroksen `CORPUS_DEBUG_DUMP`-diagnostiikalla. Merkittävää: vastauksen JSON-blobissa on niitattua markdownia kahdella paikalla joita toimivat työkalut (`events_*`, `elections_*`) eivät tuota:
+
+1. **`heading_path`-array sisältää markdown-linkkejä string-arvoina.** Esimerkkitulos #4:
+   ```json
+   "heading_path": [
+     "Vihreä perustulomalli",
+     "[Vihreä perustulomalli 2014](https://www.vihreat.fi/perustulo-ohjelma)",
+     "Perustulomallin vaikutuksia eri ihmisryhmiin"
+   ]
+   ```
+
+2. **`text`-kentät sisältävät rikasta markdownia** sisäkkäisillä korostuksilla:
+   ```
+   [**Perustulomalli on aika päivittää**](https://www.vihreat.fi/perustulomalli2014#paivittaa)
+   ```
+
+Kun koko vastausobjekti `JSON.stringify`-eitetään yhteen `text`-content-blokkiin, claude.ai:n MCP-renderöijä jämähtää — työkalu pysyy "running"-tilassa loputtomiin vaikka HTTP 200 / 73 ms / 13.7 KB on palannut palvelimelta puhtaasti. Toimivat työkalut eivät näe ongelmaa koska niiden payload on yksinkertaisempaa: lyhyitä otsikoita, kokonaislukuja, plain-string-labeleita.
+
+### Korjaus
+
+Strippaus tehdään hakuvastauksen rajalla, EI chunk-build-ajalla pipelinessa. Pipeline-chunkit säilyvät täydellisellä markdownilla niin että muut konsumenttit (kuten `corpus_get_document`-työkalu joka palauttaa täyden dokumentin) saavat kanonisen version. Vain `corpus_search_chunks`:n vastaus puhdistetaan, koska se on se joka rikkoo.
+
+Toteutus `src/search.ts`:ssä:
+
+```ts
+const MD_LINK_RE = /\[([^\]]+)\]\(([^)]+)\)/g;
+const MD_BOLD_RE = /\*\*([^*\n]+)\*\*/g;
+const MD_ITALIC_RE = /\*([^*\n]+)\*/g;
+
+export function stripMarkdown(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(MD_LINK_RE, "$1 ($2)")
+    .replace(MD_BOLD_RE, "$1")
+    .replace(MD_ITALIC_RE, "$1");
+}
+```
+
+- **`[label](url)` → `label (url)`** — säilyttää sekä ihmisluettavan labelin että URL:n; vain hakasulut katoavat. LLM:n on edelleen mahdollista siteerata lähde URL:lla.
+- **`**bold**` ja `*italic*` → `bold` / `italic`** — pelkät korostusmerkit pois.
+- **Muu markdown jätetään rauhaan** — otsikot, blockquotet, listat. Chunk-tekstillä ei ole näitä yleisesti rivin alussa eikä kapeampi strippaus riskeeraa rikkovan suomen kielen oikeaa sisältöä (esim. `*` suomen sanan keskellä epätodennäköistä mutta mahdollista).
+
+Sovelletaan jokaiseen `heading_path`-elementtiin sekä `text`-kenttään `search()`-funktion result-mapperissa.
+
+### Diagnostiikka pidetään
+
+`CORPUS_DEBUG_DUMP=1` env-gate säilyy commitissa `1a6ff99`. Off by default; käyttökelpoinen seuraavan kerran kun jokin claude.ai-renderöinti rikkoutuu.
+
+### Mitä ei muutettu
+
+- Vastauksen muoto (yksi text-blokki JSON.stringify:llä) — säilyy. Toimii jo MCP-spesin ja non-claude.ai-konsumenttien suhteen; vain sisältö puhdistetaan.
+- `parseHeadingPath` defensiivinen jäsennys (`c09415d`) — säilyy.
+- Pipeline / chunk.py / build_db.py — eivät muutu. Markdown säilyy korpuksessa.
+- `corpus_get_document` — palauttaa edelleen täyden markdown-tekstin. Ei rikkoutunut alunperinkään koska sen vastaus on yksittäinen dokumentti, ei N kappaletta JSON-blobissa.
+
+### Tiedostot
+
+- `mcp-server/src/search.ts` — uusi `stripMarkdown`-funktio + sovellus result-mapperissa
+- `mcp-server/src/search.test.ts` — 10 uutta unit-testia stripMarkdown:lle
+- `Project documentation/Logbook.md` — tämä merkintä
+
+### Build/testit
+
+`npm run build` clean. `npm test`: 16/16 passing (oli 6, +10 uutta stripMarkdown-testiä). Linkin perussuhdetta, hash-ankkureita, sisäkkäistä boldia, monta linkkiä rivissä, säilyvät newline:t, tyhjä syöte.
+
+### Hand-off Vihrea-MCP-päätiedostolle
+
+Bumppaa submodule-pin tähän committiin. Operaattorin retest:
+
+1. `git pull && docker compose pull && docker compose up -d --force-recreate vihrea-mcp`
+2. Yritä `corpus_search_chunks` claude.ai:sta samalla queryllä ("Mitä mieltä vihreät ovat perustulosta?")
+3. Jos UI renderöi tällä kertaa → hypoteesi vahvistettu, Bug B suljettu, Phase 3 suljettu
+4. Jos ei → strippaus ei ollut syy. Eskaloi Option 2:lla (multi-block per chunk).
+
+Stripattu vastaus on nyt pienempi kuin alkuperäinen 13.7 KB (URL:t ja korostusmerkit kutistuvat), mikä ei sinänsä haittaa — pienempi payload on aina toivottavampaa.

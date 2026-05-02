@@ -332,3 +332,69 @@ Operaattorin pitäisi:
 3. Käynnistää MCP uudelleen
 4. Yrittää `corpus_search_chunks` claude.ai:sta
 5. Tarkistaa `docker logs vihrea-mcp | grep corpus_search_chunks` — sieltä nyt näkyy yksi rivi per kutsu, jonka avulla Bug B:n syy selviää jos se vielä toistuu
+
+---
+
+## ENTRY BUG B DIAGNOSTIC — ENV-GATED FULL-PAYLOAD DUMP 2026-05-02 17:35:00
+
+Edellisen patch-kierroksen (`c09415d`) defensiivinen `parseHeadingPath` toimii — Vihrea-MCP:n operaattori vahvisti diagnostiikkalokirivistä että `corpus_search_chunks` palauttaa 8 todellista riviä / 13.7 KB / 200 OK 73 ms:ssä. Kuitenkin claude.ai:n käyttöliittymä ei renderöi vastausta — näyttää työkalun edelleen "ottavan kauan, ei valmistu" -tilassa.
+
+Vertailtuna `elections_*`-työkaluihin, jotka *toimivat* claude.ai:ssa samalla istunnolla samalla connectorilla:
+
+```ts
+// elections (toimii):
+{ content: [{ type: 'text', text: JSON.stringify({ mode: 'data', rows, source }, null, 2) }] }
+
+// corpus (rikki):
+{ content: [{ type: 'text', text: JSON.stringify({ results, query_used, attempt }, null, 2) }] }
+```
+
+Sama vastauksen muoto — yksi tekstilohko, JSON.stringify:n pretty-printtaama. Eli ero ei ole protokollan tasolla. Ero on **vastauksen sisällössä**: `corpus_search_chunks` palauttaa pitkiä suomenkielisiä asiakirjatekstejä (mahdollisesti markdown-muotoiluja, erikoismerkkejä, äidinkielen UTF-8-ominaisuuksia), kun taas elections-rivit ovat strukturoituja kentän/arvon pareja.
+
+### Diagnoosi-askel: ympäristömuuttujalla aktivoitava täysi payload-dump
+
+Operaattori pyysi: "could you dump the actual response payload to logs (one-off debug line) for the next call and we'll look at the structure?"
+
+Toteutus `tools/search_chunks.ts`:ssä — env-muuttuja `CORPUS_DEBUG_DUMP=1` aktivoi neljän kilotavun dumpin vastauksen alusta stderriin, merkattuna `DEBUG_DUMP_BEGIN`/`DEBUG_DUMP_END`-lipuilla helppoa grepiä varten.
+
+Oletuksena pois päältä — ei spamia tuotantolokeissa. Operaattori voi enabloida diagnoosin ajaksi, ottaa yhden kutsun, kerätä payload, disabloida.
+
+```ts
+if (process.env["CORPUS_DEBUG_DUMP"]) {
+  const PREVIEW_LIMIT = 4096;
+  const preview = responseText.slice(0, PREVIEW_LIMIT);
+  console.log(`[corpus_search_chunks] DEBUG_DUMP_BEGIN ` +
+    `(first ${preview.length} of ${responseText.length} bytes)`);
+  console.log(preview);
+  console.log(`[corpus_search_chunks] DEBUG_DUMP_END`);
+}
+```
+
+### Mikä tämä EI ole
+
+- Ei korjausta itse bugille — vain instrumentointia syyn löytämiseksi.
+- Ei muuta vastauksen muotoa — palautusobjekti on identtinen edellisen kanssa.
+- Ei poista olemassa olevaa yksirivistä diagnostiikkalokia.
+
+### Hand-off Vihrea-MCP-päätiedostolle
+
+Bumppaa submodule-pin tähän committiin. Operaattorille:
+1. `git pull && docker compose pull` (uusi MCP-image)
+2. Lisää `.env`:iin: `CORPUS_DEBUG_DUMP=1`
+3. `docker compose up -d vihrea-mcp` (käynnistä uudelleen ympäristömuuttujan kanssa)
+4. Triggeröi yksi `corpus_search_chunks`-haku claude.ai:sta
+5. Kerää loki:
+   ```bash
+   docker logs vihrea-mcp 2>&1 | sed -n '/DEBUG_DUMP_BEGIN/,/DEBUG_DUMP_END/p' | tail -60
+   ```
+6. Lähetä payload eteenpäin
+7. Diagnoosin jälkeen: poista `CORPUS_DEBUG_DUMP` `.env`:stä ja restart
+
+### Tiedostot
+
+- `mcp-server/src/tools/search_chunks.ts` — env-gated dump
+- `Project documentation/Logbook.md` — tämä merkintä
+
+### Build/testit
+
+`npm run build` clean. `npm test`: 6/6 passing (ei muutoksia testikattavuuteen — env-gate-koodi on triviaali).

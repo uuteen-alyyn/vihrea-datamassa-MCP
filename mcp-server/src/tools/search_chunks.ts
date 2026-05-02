@@ -91,6 +91,25 @@ export function registerSearchChunks(server: McpServer): void {
           `${responseText.length} bytes`,
       );
 
+      // Optional full-payload dump for diagnosing downstream rendering bugs
+      // (e.g. claude.ai's UI not displaying a 200-OK response). Enable with
+      // CORPUS_DEBUG_DUMP=1 in the environment. Off by default; outputs
+      // first 4 KB of the response to stderr, bracketed with markers for
+      // easy grep/extract. Disable by removing the env var and restarting.
+      // Server team's diagnostic ask: "could you dump the actual response
+      // payload to logs (one-off debug line) for the next call and we'll
+      // look at the structure?"
+      if (process.env["CORPUS_DEBUG_DUMP"]) {
+        const PREVIEW_LIMIT = 4096;
+        const preview = responseText.slice(0, PREVIEW_LIMIT);
+        console.log(
+          `[corpus_search_chunks] DEBUG_DUMP_BEGIN ` +
+            `(first ${preview.length} of ${responseText.length} bytes)`,
+        );
+        console.log(preview);
+        console.log(`[corpus_search_chunks] DEBUG_DUMP_END`);
+      }
+
       return {
         content: [
           {

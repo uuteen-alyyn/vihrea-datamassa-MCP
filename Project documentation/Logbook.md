@@ -584,3 +584,75 @@ Bumppaa submodule-pin tähän committiin. Operaattorin retest sama kuin viimeksi
 **Onnistuminen:** claude.ai renderöi tulokset → Bug B suljettu, Phase 3 suljettu.
 
 **Epäonnistuminen:** jos UI vielä jämähtää, tämä menee MCP-protokollan rajan yli. Lähetä diagnostiikkarivi + access-log-rivi (status, ms) takaisin. Seuraava askel olisi katsoa `StreamableHTTPServerTransport`:n käyttäytymistä SDK-tasolla (esim. mikseI-suuri vastaus rikkoo, vaikka muiden työkalujen ~10 KB vastaukset toimivat).
+
+---
+
+## ENTRY BUG B FIX, ITERATION 3 — RESPONSE-SIZE CAP + INSTRUCTION 2026-05-02 23:30:00
+
+Vihrea-MCP-päätiedoston operaattori bisektoi tarkemman raja-arvon retest:llä `:6a594c3`-imagella:
+
+| limit | bytes | claude.ai render |
+|---|---|---|
+| 1 | 711 | ✅ ok |
+| 3 | ~4500 | ✅ ok |
+| 4 | ~6000 | ❌ jämähtää |
+| 8 | 12 295 | ❌ jämähtää |
+
+Raja on noin **5 KB cumulative response size**. Multi-block ei auta — kokonaistavujen summa on muuttuja, ei per-blokki-koko tai blokkien määrä. Sama lähtökoodipolku kuin anthropics/claude-code #38437 ("MCP proxy silently hangs on tool_use results"). Paljon tiukempi kuin Claude Code:n dokumentoitu MAX_MCP_OUTPUT_TOKENS-katto (~25,000 tokenia / ~500 KB).
+
+Koska ongelma on claude.ai-puolella ja dokumentaation ulkopuolella, server-side workaround on ainoa polku jolla saamme korpuksen toimimaan tuotannossa.
+
+### Kolme niveltä
+
+**Knob A — per-chunk text cap.** `MAX_CHUNK_TEXT_CHARS = 800`. Jokaisen chunkin `text`-kenttä katkaistaan 800 merkkiin "…"-merkillä. Predictable per-blokki-koko (~1 KB), välttää että yksittäinen pathologisesti pitkä chunk täyttäisi koko budjetin yksinään.
+
+**Knob B — total response byte cap.** `MAX_RESPONSE_BYTES = 4500`. Loop result-blokkien kautta, summaa kumulatiiviset tavut. Kun seuraavan blokin lisääminen ylittäisi `MAX_RESPONSE_BYTES - HEADER_RESERVE_BYTES`, lopeta. Palauta sen mitä mahtuu, raportoi loput "dropped"-tilastolla headerissa. 4500 tavua antaa ~25% turvamarginaalin operaattorin havaittuun limit=3-success / limit=4-hang -rajaan.
+
+**Knob C — ohjeistus LLM:lle.** Kahdessa kerroksessa:
+- *Tool description* (mitä Claude lukee suunnitteluvaiheessa): uusi paragraph "VASTAUKSEN KOKORAJA". Selittää että työkalu palauttaa enintään ~4 chunkkia per kutsu, ohjeistaa kutsumaan useita kertoja eri hakutermeillä tai käyttämään `corpus_get_document`:ia koko tekstille. Esimerkkeinä: synonyymit, lähikäsitteet, eri näkökulmat.
+- *Adaptive header* (mitä Claude lukee jokaisen kutsun jälkeen): jos `dropped > 0`, header sanoo "Löytyi N osumaa, näytetään M ensimmäistä — kokoraja täyttyi, kutsu uudelleen tarkennetulla hakutermillä." Jos `anyTruncated`, header lisää "Chunk-tekstit katkaistu 800 merkkiin, käytä corpus_get_document koko tekstille."
+
+### Implementaation rakenne
+
+`formatHeaderBlock`-signature kasvoi: `(query, attempt, totalFound, returned, dropped, anyTruncated)`. Tämä koska header tarvitsee tietää kuinka monta blokkia mahtui ennen kuin se voidaan rakentaa — siksi result-blokit rakennetaan ensin temp-arrayhin, sitten header, sitten yhdistetään lopulliseen `blocks`-arrayhin.
+
+Uusi pure helper `truncateChunkText(text)` palauttaa `{text, truncated}`. Testikatettu reunaehdoilla (alle/tasan/yli rajan, paljon yli, tyhjä).
+
+Diagnostiikkarivi rikastui: nyt näkyy `M/N returned` (kuinka monta mahtui vs. löytyi yhteensä) plus `(N dropped)` ja `(some chunk text truncated)` -liput.
+
+```
+[corpus_search_chunks] query="perustulo" limit=8 attempt=1 → 4/8 results returned, 4234 bytes across 5 content blocks (4 dropped due to size cap) (some chunk text truncated)
+```
+
+### Mitä säilyi
+
+- `c09415d`:n defensiivinen `parseHeadingPath`
+- `60f2972`:n `stripMarkdown`
+- `1a6ff99`:n env-gated `CORPUS_DEBUG_DUMP` (formaatti edelleen multi-block-summary)
+- Multi-block-rakenne (`6727835`) — ei poistettu vaikka se ei yksin riittänyt
+- Default `limit = 5` — kokoraja toimii muuttujana, default on vain hint Claudelle
+
+### Tiedostot
+
+- `mcp-server/src/tools/search_chunks.ts` — kolme niveltä + uusi formatter-signature + päivitetty DESCRIPTION
+- `mcp-server/src/tools/search_chunks.test.ts` — 8 uutta testiä truncate:lle ja uusille header-cases:lle
+- `Project documentation/Logbook.md` — tämä merkintä
+
+### Build/testit
+
+`npm run build` clean. `npm test`: **35/35 passing** (oli 27, +8 uutta).
+
+### Hand-off Vihrea-MCP-päätiedostolle
+
+Bumppaa submodule-pin tähän committiin. Operaattorin retest:
+
+1. `git pull && docker compose pull && docker compose up -d --force-recreate vihrea-mcp`
+2. Triggeröi `corpus_search_chunks` claude.ai:sta normaalilla queryllä (esim. "perustulo")
+3. Diagnostiikkarivin pitäisi nyt näyttää `M/N returned` -muoto ja todennäköisesti M ≤ 4
+4. claude.ai:n UI:n pitäisi renderöidä tulokset
+
+**Mahdolliset tulokset:**
+
+a. **Renderöi puhtaasti** → Bug B suljettu, Phase 3 suljettu.
+b. **Vielä jämähtää** → 4500-tavun cap on yli kynnyksen. Pudota `MAX_RESPONSE_BYTES` arvoon 3500 tai 3000 ja iteroi. Kynnys voi vaihdella claude.ai-versioiden / mallien välillä.
+c. **Renderöi mutta Claude tekee vain yhden kutsun isoon kysymykseen** → ohjeistus toimii teknisesti mutta ei vakuuta. Vahvista DESCRIPTION:in sananmuotoa (esim. "AINA kutsu uudelleen kun on enemmän relevantteja chunkkeja" -tyyppinen vahvempi ohje).
